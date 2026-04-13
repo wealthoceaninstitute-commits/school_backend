@@ -3,14 +3,14 @@ from app.models.parent import ParentProfile, parent_student_link
 from app.models.school import (
     SchoolClass,
     SchoolSection,
-    SchoolStudent,
+    SchoolFeeStructure,
     SchoolParent,
+    SchoolStudent,
+    SchoolParentStudent,
     SchoolTeacher,
-    SchoolAttendance,
-    SchoolFee,
-    SchoolTimetable,
-    SchoolResult,
-    SchoolNotice,
+    SchoolTeacherClass,
+    SchoolTeacherAttendance,
+    SchoolTimetableEntry,
     SchoolSubject,
     SchoolRoom,
 )
@@ -24,7 +24,6 @@ from app.models.student import (
 )
 from app.models.teacher import TeacherClass, TeacherProfile
 from app.models.user import User
-from app.models.school import SchoolSubject, SchoolRoom
 
 __all__ = [
     "User",
@@ -40,14 +39,15 @@ __all__ = [
     "TeacherClass",
     "Notice",
     "SchoolClass",
-    "SchoolFeeStructure",
     "SchoolSection",
+    "SchoolFeeStructure",
     "SchoolParent",
     "SchoolStudent",
     "SchoolParentStudent",
     "SchoolTeacher",
-    "SchoolTeacherAttendance",
     "SchoolTeacherClass",
+    "SchoolTeacherAttendance",
     "SchoolTimetableEntry",
     "SchoolSubject",
+    "SchoolRoom",
 ]
