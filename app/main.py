@@ -12,6 +12,21 @@ from app.models import *  # noqa: F401,F403
 from app.api.routes import auth, health, mobile, notices, parent, school_admin, student, teacher
 
 
+def _clean_origins(values):
+    out = []
+    seen = set()
+
+    for value in values or []:
+        item = str(value).strip().rstrip("/")
+        if not item:
+            continue
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+
+    return out
+
+
 def get_cors_origins():
     fallback = [
         "http://localhost:3000",
@@ -20,25 +35,29 @@ def get_cors_origins():
         "https://school-frontend-cgqj.vercel.app",
     ]
 
+    env_origins = []
     raw_env = os.getenv("CORS_ORIGINS")
     if raw_env:
         try:
             parsed = json.loads(raw_env)
             if isinstance(parsed, list):
-                cleaned = [str(x).strip().rstrip("/") for x in parsed if str(x).strip()]
-                if cleaned:
-                    return cleaned
+                env_origins = [str(x) for x in parsed]
+            elif isinstance(parsed, str):
+                env_origins = [parsed]
         except Exception:
-            pass
+            # Also support comma-separated env values
+            env_origins = [x.strip() for x in raw_env.split(",") if x.strip()]
 
     cfg_origins = getattr(settings, "cors_origins", None)
+    cfg_origins = cfg_origins if isinstance(cfg_origins, list) else []
 
-    if isinstance(cfg_origins, list) and cfg_origins:
-        cleaned = [str(x).strip().rstrip("/") for x in cfg_origins if str(x).strip()]
-        if cleaned:
-            return cleaned
+    merged = _clean_origins([
+        *fallback,
+        *cfg_origins,
+        *env_origins,
+    ])
 
-    return fallback
+    return merged
 
 
 Base.metadata.create_all(bind=engine)
