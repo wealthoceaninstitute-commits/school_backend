@@ -70,6 +70,6 @@ class MessageResponse(BaseModel):
     message: str
 
 
-class ForgotPasswordRequestResponse(MessageResponse):
+class For9yMnTm4NSzvG9rrwjM2ec8xZgh1cafXH8(MessageResponse):
     otp_sent_to: str = ""
     otp_debug: str | None = None
