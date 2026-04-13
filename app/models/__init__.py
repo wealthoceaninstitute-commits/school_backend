@@ -2,16 +2,17 @@ from app.models.notice import Notice
 from app.models.parent import ParentProfile, parent_student_link
 from app.models.school import (
     SchoolClass,
-    SchoolFeeStructure,
-    SchoolParent,
-    SchoolParentStudent,
     SchoolSection,
     SchoolStudent,
+    SchoolParent,
     SchoolTeacher,
-    SchoolTeacherAttendance,
-    SchoolTeacherClass,
-    SchoolTimetableEntry,
+    SchoolAttendance,
+    SchoolFee,
+    SchoolTimetable,
+    SchoolResult,
+    SchoolNotice,
     SchoolSubject,
+    SchoolRoom,
 )
 from app.models.student import (
     AttendanceRecord,
@@ -23,6 +24,7 @@ from app.models.student import (
 )
 from app.models.teacher import TeacherClass, TeacherProfile
 from app.models.user import User
+from app.models.school import SchoolSubject, SchoolRoom
 
 __all__ = [
     "User",
