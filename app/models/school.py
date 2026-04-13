@@ -298,14 +298,6 @@ class SchoolTimetableEntry(Base):
     teacher = relationship("SchoolTeacher", back_populates="timetable_entries")
 
 
-class SchoolSubject(Base):
-    __tablename__ = "school_subjects"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="Active", nullable=False)
-
-
 class SchoolRoom(Base):
     __tablename__ = "school_rooms"
 
