@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, computed_field, model_validator
 class ClassBase(BaseModel):
     name: str = Field(min_length=1, max_length=50)
     sections: list[str] = Field(default_factory=list)
+    class_teacher_id: Optional[int] = None
     class_teacher: str = ""
     status: str = "Active"
 
@@ -25,6 +26,7 @@ class ClassOut(ClassBase):
     id: int
     class_teacher_id: Optional[int] = None
     class_teacher: str = ""
+    student_count: int = 0
 
     class Config:
         from_attributes = True
@@ -308,6 +310,9 @@ class TeacherOut(BaseModel):
     subjects: str
     status: str
     class_count: int
+    attendance_percentage: int = 0
+    present_days: int = 0
+    working_days: int = 0
     classes: list[TeacherClassOut] = Field(default_factory=list)
 
     class Config:
@@ -317,6 +322,50 @@ class TeacherOut(BaseModel):
 class TeacherListResponse(BaseModel):
     items: list[TeacherOut]
     total: int
+
+
+# =========================
+# Settings / Subjects
+# =========================
+
+class SubjectBase(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    status: str = "Active"
+
+
+class SubjectCreate(SubjectBase):
+    pass
+
+
+class SubjectUpdate(SubjectBase):
+    pass
+
+
+class SubjectOut(SubjectBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class SubjectListResponse(BaseModel):
+    items: list[SubjectOut]
+    total: int
+
+
+class TeacherAttendanceUpsertIn(BaseModel):
+    attendance_date: str = Field(min_length=8, max_length=20)
+    status: str = Field(default="Present", min_length=3, max_length=20)
+
+
+class TeacherAttendanceOut(BaseModel):
+    id: int
+    teacher_id: int
+    attendance_date: str
+    status: str
+
+    class Config:
+        from_attributes = True
 
 # =========================
 # Timetable
