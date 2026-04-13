@@ -64,7 +64,10 @@ app.include_router(student.router, prefix="/student", tags=["student"])
 app.include_router(teacher.router, prefix="/teacher", tags=["teacher"])
 app.include_router(notices.router, prefix="/notices", tags=["notices"])
 app.include_router(mobile.router)
-app.include_router(school_admin.router)
+
+# Admin/master-data routes used by frontend pages like:
+# /admin/classes, /admin/students, /admin/teachers, /admin/settings/subjects, etc.
+app.include_router(school_admin.router, prefix="/admin", tags=["school-admin"])
 
 
 @app.get("/")
