@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.school import (
     SchoolClass,
@@ -20,6 +21,7 @@ from app.models.school import (
     SchoolTeacherClass,
     SchoolTimetableEntry,
 )
+from app.models.user import User
 from app.schemas.school import (
     ClassCreate,
     ClassOut,
@@ -55,7 +57,6 @@ from app.schemas.school import (
     TimetableEntryUpdate,
     TimetableListOut,
 )
-
 router = APIRouter()
 
 
