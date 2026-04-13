@@ -573,6 +573,7 @@ def list_sections(
 def list_students(
     search: str = Query(default=""),
     class_id: Optional[int] = Query(default=None),
+    section: str = Query(default=""),
     status_filter: str = Query(default="", alias="status"),
     db: Session = Depends(get_db),
 ):
@@ -587,6 +588,9 @@ def list_students(
     if class_id:
         query = query.filter(SchoolStudent.class_id == class_id)
 
+    if section.strip():
+        query = query.filter(SchoolStudent.section == section.strip())
+
     if status_filter:
         query = query.filter(SchoolStudent.status == status_filter)
 
@@ -598,6 +602,7 @@ def list_students(
                 SchoolStudent.roll_no.ilike(term),
                 SchoolStudent.guardian_name.ilike(term),
                 SchoolStudent.phone.ilike(term),
+                SchoolStudent.section.ilike(term),
             )
         )
 
