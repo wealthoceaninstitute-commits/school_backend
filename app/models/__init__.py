@@ -8,8 +8,10 @@ from app.models.school import (
     SchoolSection,
     SchoolStudent,
     SchoolTeacher,
+    SchoolTeacherAttendance,
     SchoolTeacherClass,
     SchoolTimetableEntry,
+    SchoolSubject,
 )
 from app.models.student import (
     AttendanceRecord,
@@ -42,6 +44,8 @@ __all__ = [
     "SchoolStudent",
     "SchoolParentStudent",
     "SchoolTeacher",
+    "SchoolTeacherAttendance",
     "SchoolTeacherClass",
     "SchoolTimetableEntry",
+    "SchoolSubject",
 ]
