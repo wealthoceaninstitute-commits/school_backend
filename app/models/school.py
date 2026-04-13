@@ -74,7 +74,7 @@ class SchoolSection(Base):
     school_class = relationship("SchoolClass", back_populates="sections")
     timetable_entries = relationship(
         "SchoolTimetableEntry",
-        back_populates="school_class",
+        back_populates="section",
         cascade="all, delete-orphan",
         order_by="SchoolTimetableEntry.day_name, SchoolTimetableEntry.period_no",
     )
