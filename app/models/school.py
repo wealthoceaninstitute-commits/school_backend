@@ -138,6 +138,9 @@ class SchoolStudent(Base):
     roll_no: Mapped[str] = mapped_column(String(30), index=True)
     guardian_name: Mapped[str] = mapped_column(String(100))
     phone: Mapped[str] = mapped_column(String(20))
+    gender: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    date_of_birth: Mapped[Date | None] = mapped_column(Date, nullable=True)
+    date_of_admission: Mapped[Date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="Active")
     attendance_percentage: Mapped[int] = mapped_column(Integer, default=0)
     fee_total: Mapped[int] = mapped_column(Integer, default=0)
@@ -162,7 +165,6 @@ class SchoolStudent(Base):
         back_populates="student",
         cascade="all, delete-orphan",
     )
-
 
 class SchoolParentStudent(Base):
     __tablename__ = "school_parent_students"
