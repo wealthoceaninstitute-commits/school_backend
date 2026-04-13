@@ -57,18 +57,70 @@ from app.schemas.school import (
     TimetableEntryUpdate,
     TimetableListOut,
 )
+
 router = APIRouter()
+
+DEFAULT_LOGIN_PASSWORD = "123456"
 
 
 # --------------------------------------------------
 # Helpers
 # --------------------------------------------------
 
-DEFAULT_LOGIN_PASSWORD = "123456"
+def _normalize_text(value: Optional[str]) -> str:
+    return (value or "").strip()
 
 
 def _normalize_login_value(value: Optional[str]) -> str:
     return (value or "").strip().lower()
+
+
+def _normalize_list(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen = set()
+    for raw in values or []:
+        name = _normalize_text(raw)
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(name)
+    return out
+
+
+def _get_section_names(item: SchoolClass) -> list[str]:
+    return [s.name for s in (item.sections or [])]
+
+
+def _set_class_sections(db: Session, school_class: SchoolClass, sections: list[str]) -> None:
+    names = _normalize_list(sections)
+    school_class.sections.clear()
+    for name in names:
+        school_class.sections.append(SchoolSection(name=name))
+
+
+def _section_to_out(item: SchoolSection) -> SectionOut:
+    return SectionOut(
+        id=item.id,
+        class_id=item.class_id,
+        name=item.name,
+    )
+
+
+def _validate_section_for_class(db: Session, class_id: int, section_id: int) -> SchoolSection:
+    section = (
+        db.query(SchoolSection)
+        .filter(
+            SchoolSection.id == section_id,
+            SchoolSection.class_id == class_id,
+        )
+        .first()
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found for selected class")
+    return section
 
 
 def _student_login_username(student: SchoolStudent) -> str:
@@ -112,7 +164,6 @@ def _assert_login_username_available(
 
 def _upsert_student_user(db: Session, student: SchoolStudent):
     username = _student_login_username(student)
-    _assert_login_username_available(db, username, "student")
 
     user = (
         db.query(User)
@@ -128,6 +179,7 @@ def _upsert_student_user(db: Session, student: SchoolStudent):
         user.school_student_id = student.id
         user.is_active = (student.status or "").strip().lower() == "active"
     else:
+        _assert_login_username_available(db, username, "student")
         db.add(
             User(
                 username=username,
@@ -143,7 +195,6 @@ def _upsert_student_user(db: Session, student: SchoolStudent):
 
 def _upsert_parent_user(db: Session, parent: SchoolParent):
     username = _parent_login_username(parent)
-    _assert_login_username_available(db, username, "parent")
 
     user = (
         db.query(User)
@@ -159,6 +210,7 @@ def _upsert_parent_user(db: Session, parent: SchoolParent):
         user.school_parent_id = parent.id
         user.is_active = (parent.status or "").strip().lower() == "active"
     else:
+        _assert_login_username_available(db, username, "parent")
         db.add(
             User(
                 username=username,
@@ -174,7 +226,6 @@ def _upsert_parent_user(db: Session, parent: SchoolParent):
 
 def _upsert_teacher_user(db: Session, teacher: SchoolTeacher):
     username = _teacher_login_username(teacher)
-    _assert_login_username_available(db, username, "teacher")
 
     user = (
         db.query(User)
@@ -190,6 +241,7 @@ def _upsert_teacher_user(db: Session, teacher: SchoolTeacher):
         user.school_teacher_id = teacher.id
         user.is_active = (teacher.status or "").strip().lower() == "active"
     else:
+        _assert_login_username_available(db, username, "teacher")
         db.add(
             User(
                 username=username,
@@ -225,6 +277,256 @@ def _delete_linked_user(
         db.delete(user)
 
 
+def _class_to_out(item: SchoolClass) -> ClassOut:
+    teacher_name = ""
+    teacher_id = None
+
+    if item.primary_teacher:
+        teacher_name = item.primary_teacher.teacher_name or ""
+        teacher_id = item.primary_teacher.id
+
+    active_student_count = len(
+        [s for s in (item.students or []) if (s.status or "").strip().lower() == "active"]
+    )
+
+    return ClassOut(
+        id=item.id,
+        name=item.name,
+        sections=_get_section_names(item),
+        class_teacher_id=teacher_id,
+        class_teacher=teacher_name,
+        status=item.status,
+        student_count=active_student_count,
+    )
+
+
+def _parent_to_out(item: SchoolParent) -> ParentOut:
+    students: list[ParentStudentMiniOut] = []
+
+    for link in item.student_links or []:
+        student = link.student
+        if not student:
+            continue
+        students.append(
+            ParentStudentMiniOut(
+                id=student.id,
+                name=student.name,
+                class_id=student.class_id,
+                class_name=student.school_class.name if student.school_class else "",
+                section=student.section or "",
+                roll_no=student.roll_no or "",
+                is_primary=bool(link.is_primary),
+            )
+        )
+
+    return ParentOut(
+        id=item.id,
+        parent_name=item.parent_name,
+        relation=item.relation,
+        phone=item.phone,
+        alt_phone=item.alt_phone,
+        email=item.email,
+        address=item.address,
+        status=item.status,
+        students=students,
+    )
+
+
+def _student_to_out(item: SchoolStudent) -> StudentOut:
+    parents: list[StudentParentMiniOut] = []
+
+    for link in item.parent_links or []:
+        parent = link.parent
+        if not parent:
+            continue
+        parents.append(
+            StudentParentMiniOut(
+                id=parent.id,
+                parent_name=parent.parent_name,
+                relation=link.relation_label or parent.relation or "Guardian",
+                phone=parent.phone or "",
+                is_primary=bool(link.is_primary),
+            )
+        )
+
+    return StudentOut(
+        id=item.id,
+        name=item.name,
+        class_id=item.class_id,
+        class_name=item.school_class.name if item.school_class else "",
+        section=item.section,
+        roll_no=item.roll_no,
+        guardian_name=item.guardian_name,
+        phone=item.phone,
+        status=item.status,
+        attendance_percentage=item.attendance_percentage,
+        fee_total=item.fee_total,
+        fee_paid=item.fee_paid,
+        pending_fee=max((item.fee_total or 0) - (item.fee_paid or 0), 0),
+        gender=getattr(item, "gender", None),
+        date_of_birth=getattr(item, "date_of_birth", None),
+        date_of_admission=getattr(item, "date_of_admission", None),
+        parents=parents,
+    )
+
+
+def _teacher_attendance_stats(item: SchoolTeacher) -> tuple[int, int, int]:
+    entries = item.attendance_entries or []
+    working_days = len(entries)
+    present_days = len([x for x in entries if (x.status or "").strip().lower() == "present"])
+    attendance_percentage = round((present_days / working_days) * 100) if working_days > 0 else 0
+    return present_days, working_days, attendance_percentage
+
+
+def _teacher_to_out(item: SchoolTeacher) -> TeacherOut:
+    classes: list[TeacherClassMiniOut] = []
+
+    for link in item.class_links or []:
+        school_class = link.school_class
+        if not school_class:
+            continue
+        classes.append(
+            TeacherClassMiniOut(
+                id=school_class.id,
+                name=school_class.name,
+                sections=_get_section_names(school_class),
+                is_primary=bool(link.is_primary),
+            )
+        )
+
+    present_days, working_days, attendance_percentage = _teacher_attendance_stats(item)
+
+    return TeacherOut(
+        id=item.id,
+        teacher_name=item.teacher_name,
+        employee_id=item.employee_id,
+        phone=item.phone,
+        email=item.email,
+        subjects=item.subjects,
+        status=item.status,
+        classes=classes,
+        class_count=len(classes),
+        present_days=present_days,
+        working_days=working_days,
+        attendance_percentage=attendance_percentage,
+    )
+
+
+def _timetable_to_out(item: SchoolTimetableEntry) -> TimetableEntryOut:
+    return TimetableEntryOut(
+        id=item.id,
+        class_id=item.class_id,
+        section_id=item.section_id,
+        class_name=item.school_class.name if item.school_class else "",
+        section_name=item.section.name if item.section else "",
+        teacher_id=item.teacher_id,
+        teacher_name=item.teacher.teacher_name if item.teacher else "",
+        timetable_type=item.timetable_type,
+        day_name=item.day_name,
+        period_no=item.period_no,
+        period_label=item.period_label or "",
+        subject=item.subject or "",
+        start_time=item.start_time or "",
+        end_time=item.end_time or "",
+        room=item.room or "",
+        remark=item.remark or "",
+        status=item.status,
+    )
+
+
+def _fee_structure_to_out(item: SchoolFeeStructure) -> FeeStructureOut:
+    return FeeStructureOut(
+        id=item.id,
+        class_id=item.class_id,
+        class_name=item.school_class.name if item.school_class else "",
+        academic_year=item.academic_year,
+        admission_fee=item.admission_fee,
+        tuition_fee=item.tuition_fee,
+        exam_fee=item.exam_fee,
+        transport_fee=item.transport_fee,
+        misc_fee=item.misc_fee,
+        due_day=item.due_day,
+        status=item.status,
+    )
+
+
+def _sync_teacher_class_links(
+    db: Session,
+    teacher: SchoolTeacher,
+    class_links_payload: list,
+    set_as_primary_teacher: bool = True,
+) -> None:
+    requested_class_ids = [x.class_id for x in class_links_payload]
+
+    for existing in list(teacher.class_links or []):
+        if existing.class_id not in requested_class_ids:
+            db.delete(existing)
+
+    for link_in in class_links_payload:
+        school_class = (
+            db.query(SchoolClass)
+            .filter(SchoolClass.id == link_in.class_id)
+            .first()
+        )
+        if not school_class:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Class not found for class_id={link_in.class_id}",
+            )
+
+        existing_link = next(
+            (x for x in (teacher.class_links or []) if x.class_id == link_in.class_id),
+            None,
+        )
+
+        if existing_link:
+            existing_link.is_primary = bool(link_in.is_primary)
+        else:
+            teacher.class_links.append(
+                SchoolTeacherClass(
+                    class_id=link_in.class_id,
+                    is_primary=bool(link_in.is_primary),
+                )
+            )
+
+    primary_links = [x for x in (teacher.class_links or []) if x.is_primary]
+    if len(primary_links) > 1:
+        first = primary_links[0]
+        for x in primary_links[1:]:
+            x.is_primary = False
+
+    if set_as_primary_teacher:
+        primary_link = next((x for x in (teacher.class_links or []) if x.is_primary), None)
+
+        linked_class_ids = {x.class_id for x in (teacher.class_links or [])}
+        old_primary_classes = (
+            db.query(SchoolClass)
+            .filter(SchoolClass.class_teacher_id == teacher.id)
+            .all()
+        )
+        for c in old_primary_classes:
+            if not primary_link or c.id != primary_link.class_id:
+                c.class_teacher_id = None
+
+        if primary_link:
+            primary_class = (
+                db.query(SchoolClass)
+                .filter(SchoolClass.id == primary_link.class_id)
+                .first()
+            )
+            if primary_class:
+                primary_class.class_teacher_id = teacher.id
+
+        if not linked_class_ids:
+            classes_with_teacher = (
+                db.query(SchoolClass)
+                .filter(SchoolClass.class_teacher_id == teacher.id)
+                .all()
+            )
+            for c in classes_with_teacher:
+                c.class_teacher_id = None
+
+
 # --------------------------------------------------
 # Classes
 # --------------------------------------------------
@@ -254,7 +556,6 @@ def create_class(payload: ClassCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Class already exists")
 
-    teacher = None
     if payload.class_teacher_id:
         teacher = db.query(SchoolTeacher).filter(SchoolTeacher.id == payload.class_teacher_id).first()
         if not teacher:
@@ -270,7 +571,6 @@ def create_class(payload: ClassCreate, db: Session = Depends(get_db)):
 
     _set_class_sections(db, item, payload.sections or [])
 
-    # ensure reverse teacher link exists when teacher selected from class side
     if payload.class_teacher_id:
         link = (
             db.query(SchoolTeacherClass)
@@ -340,7 +640,6 @@ def update_class(class_id: int, payload: ClassUpdate, db: Session = Depends(get_
 
     _set_class_sections(db, item, payload.sections or [])
 
-    # old teacher unlink on class side
     if old_teacher_id and old_teacher_id != payload.class_teacher_id:
         old_link = (
             db.query(SchoolTeacherClass)
@@ -353,7 +652,6 @@ def update_class(class_id: int, payload: ClassUpdate, db: Session = Depends(get_
         if old_link and old_link.is_primary:
             old_link.is_primary = False
 
-    # new teacher link on class side
     if payload.class_teacher_id:
         link = (
             db.query(SchoolTeacherClass)
@@ -491,11 +789,17 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
         if not primary_parent:
             raise HTTPException(status_code=404, detail="Primary parent not found")
 
+    roll_no = _normalize_text(payload.roll_no)
+    if not roll_no:
+        raise HTTPException(status_code=400, detail="Roll number is required")
+
+    _assert_login_username_available(db, _normalize_login_value(roll_no), "student")
+
     item = SchoolStudent(
         name=_normalize_text(payload.name),
         class_id=payload.class_id,
         section=section_name,
-        roll_no=_normalize_text(payload.roll_no),
+        roll_no=roll_no,
         guardian_name=_normalize_text(payload.guardian_name),
         phone=_normalize_text(payload.phone),
         gender=payload.gender,
@@ -523,6 +827,8 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
                 relation_label=parent.relation or "Guardian",
             )
         )
+
+    _upsert_student_user(db, item)
 
     db.commit()
 
@@ -589,6 +895,21 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
     item.fee_paid = payload.fee_paid or 0
     item.primary_parent_id = payload.primary_parent_id
 
+    if not item.roll_no:
+        raise HTTPException(status_code=400, detail="Roll number is required")
+
+    linked_user = (
+        db.query(User)
+        .filter(User.school_student_id == item.id, User.role == "student")
+        .first()
+    )
+    _assert_login_username_available(
+        db,
+        _normalize_login_value(item.roll_no),
+        "student",
+        exclude_user_id=linked_user.id if linked_user else None,
+    )
+
     for link in list(item.parent_links or []):
         db.delete(link)
     db.flush()
@@ -605,6 +926,8 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
                 relation_label=parent.relation or "Guardian",
             )
         )
+
+    _upsert_student_user(db, item)
 
     db.commit()
 
@@ -626,6 +949,7 @@ def delete_student(student_id: int, db: Session = Depends(get_db)):
     if not item:
         raise HTTPException(status_code=404, detail="Student not found")
 
+    _delete_linked_user(db, role="student", school_student_id=student_id)
     db.delete(item)
     db.commit()
     return MessageOut(message="Student deleted successfully")
@@ -670,6 +994,12 @@ def list_parents(
 
 @router.post("/parents", response_model=ParentOut, status_code=status.HTTP_201_CREATED)
 def create_parent(payload: ParentCreate, db: Session = Depends(get_db)):
+    login_username = _parent_login_username_from_values(
+        _normalize_text(payload.phone),
+        _normalize_text(payload.email),
+    )
+    _assert_login_username_available(db, login_username, "parent")
+
     item = SchoolParent(
         parent_name=_normalize_text(payload.parent_name),
         relation=_normalize_text(payload.relation) or "Guardian",
@@ -696,6 +1026,8 @@ def create_parent(payload: ParentCreate, db: Session = Depends(get_db)):
         )
         if student_id == payload.primary_student_id:
             student.primary_parent_id = item.id
+
+    _upsert_parent_user(db, item)
 
     db.commit()
 
@@ -731,6 +1063,18 @@ def update_parent(parent_id: int, payload: ParentUpdate, db: Session = Depends(g
     item.address = _normalize_text(payload.address)
     item.status = payload.status or "Active"
 
+    linked_user = (
+        db.query(User)
+        .filter(User.school_parent_id == item.id, User.role == "parent")
+        .first()
+    )
+    _assert_login_username_available(
+        db,
+        _parent_login_username(item),
+        "parent",
+        exclude_user_id=linked_user.id if linked_user else None,
+    )
+
     for link in list(item.student_links or []):
         student = db.query(SchoolStudent).filter(SchoolStudent.id == link.student_id).first()
         if student and student.primary_parent_id == item.id:
@@ -752,6 +1096,8 @@ def update_parent(parent_id: int, payload: ParentUpdate, db: Session = Depends(g
         )
         if student_id == payload.primary_student_id:
             student.primary_parent_id = item.id
+
+    _upsert_parent_user(db, item)
 
     db.commit()
 
@@ -778,6 +1124,7 @@ def delete_parent(parent_id: int, db: Session = Depends(get_db)):
     for student in students:
         student.primary_parent_id = None
 
+    _delete_linked_user(db, role="parent", school_parent_id=parent_id)
     db.delete(item)
     db.commit()
     return MessageOut(message="Parent deleted successfully")
@@ -832,6 +1179,8 @@ def create_teacher(payload: TeacherCreate, db: Session = Depends(get_db)):
     if duplicate:
         raise HTTPException(status_code=400, detail="Employee ID already exists")
 
+    _assert_login_username_available(db, _normalize_login_value(employee_id), "teacher")
+
     item = SchoolTeacher(
         teacher_name=_normalize_text(payload.teacher_name),
         employee_id=employee_id,
@@ -849,6 +1198,8 @@ def create_teacher(payload: TeacherCreate, db: Session = Depends(get_db)):
         class_links_payload=payload.class_links or [],
         set_as_primary_teacher=payload.set_as_primary_teacher,
     )
+
+    _upsert_teacher_user(db, item)
 
     db.commit()
 
@@ -891,12 +1242,26 @@ def update_teacher(teacher_id: int, payload: TeacherUpdate, db: Session = Depend
     item.subjects = _normalize_text(payload.subjects)
     item.status = payload.status or "Active"
 
+    linked_user = (
+        db.query(User)
+        .filter(User.school_teacher_id == item.id, User.role == "teacher")
+        .first()
+    )
+    _assert_login_username_available(
+        db,
+        _normalize_login_value(employee_id),
+        "teacher",
+        exclude_user_id=linked_user.id if linked_user else None,
+    )
+
     _sync_teacher_class_links(
         db=db,
         teacher=item,
         class_links_payload=payload.class_links or [],
         set_as_primary_teacher=payload.set_as_primary_teacher,
     )
+
+    _upsert_teacher_user(db, item)
 
     db.commit()
 
@@ -922,6 +1287,7 @@ def delete_teacher(teacher_id: int, db: Session = Depends(get_db)):
     for school_class in classes:
         school_class.class_teacher_id = None
 
+    _delete_linked_user(db, role="teacher", school_teacher_id=teacher_id)
     db.delete(item)
     db.commit()
     return MessageOut(message="Teacher deleted successfully")
