@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -206,6 +206,13 @@ class SchoolTeacher(Base):
         foreign_keys="SchoolTimetableEntry.teacher_id",
     )
 
+    attendance_entries = relationship(
+        "SchoolTeacherAttendance",
+        back_populates="teacher",
+        cascade="all, delete-orphan",
+        order_by="SchoolTeacherAttendance.attendance_date.desc()",
+    )
+
 
 class SchoolTeacherClass(Base):
     __tablename__ = "school_teacher_classes"
@@ -226,6 +233,31 @@ class SchoolTeacherClass(Base):
 
     teacher = relationship("SchoolTeacher", back_populates="class_links")
     school_class = relationship("SchoolClass", back_populates="teacher_links")
+
+
+class SchoolSubject(Base):
+    __tablename__ = "school_subjects"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="Active")
+
+
+class SchoolTeacherAttendance(Base):
+    __tablename__ = "school_teacher_attendance"
+    __table_args__ = (
+        UniqueConstraint("teacher_id", "attendance_date", name="uq_teacher_attendance_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    teacher_id: Mapped[int] = mapped_column(
+        ForeignKey("school_teachers.id", ondelete="CASCADE"),
+        index=True,
+    )
+    attendance_date: Mapped[Date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="Present")
+
+    teacher = relationship("SchoolTeacher", back_populates="attendance_entries")
 
 
 class SchoolTimetableEntry(Base):
