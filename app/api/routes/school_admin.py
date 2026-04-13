@@ -616,32 +616,43 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
     if not school_class:
         raise HTTPException(status_code=404, detail="Class not found")
 
-    primary_parent = None
+    section_name = _normalize_text(payload.section)
+    section_exists = (
+        db.query(SchoolSection)
+        .filter(
+            SchoolSection.class_id == payload.class_id,
+            SchoolSection.name == section_name,
+        )
+        .first()
+    )
+    if not section_exists:
+        raise HTTPException(status_code=404, detail="Section not found for selected class")
+
     if payload.primary_parent_id:
-        primary_parent = db.query(SchoolParent).filter(SchoolParent.id == payload.primary_parent_id).first()
+        primary_parent = (
+            db.query(SchoolParent)
+            .filter(SchoolParent.id == payload.primary_parent_id)
+            .first()
+        )
         if not primary_parent:
             raise HTTPException(status_code=404, detail="Primary parent not found")
 
     item = SchoolStudent(
         name=_normalize_text(payload.name),
         class_id=payload.class_id,
-        section=_normalize_text(payload.section),
+        section=section_name,
         roll_no=_normalize_text(payload.roll_no),
         guardian_name=_normalize_text(payload.guardian_name),
         phone=_normalize_text(payload.phone),
+        gender=payload.gender,
+        date_of_birth=payload.date_of_birth,
+        date_of_admission=payload.date_of_admission,
         status=payload.status or "Active",
         attendance_percentage=payload.attendance_percentage or 0,
         fee_total=payload.fee_total or 0,
         fee_paid=payload.fee_paid or 0,
         primary_parent_id=payload.primary_parent_id,
     )
-
-    if hasattr(item, "gender"):
-        item.gender = payload.gender
-    if hasattr(item, "date_of_birth"):
-        item.date_of_birth = payload.date_of_birth
-    if hasattr(item, "date_of_admission"):
-        item.date_of_admission = payload.date_of_admission
 
     db.add(item)
     db.flush()
@@ -688,29 +699,41 @@ def update_student(student_id: int, payload: StudentUpdate, db: Session = Depend
     if not school_class:
         raise HTTPException(status_code=404, detail="Class not found")
 
+    section_name = _normalize_text(payload.section)
+    section_exists = (
+        db.query(SchoolSection)
+        .filter(
+            SchoolSection.class_id == payload.class_id,
+            SchoolSection.name == section_name,
+        )
+        .first()
+    )
+    if not section_exists:
+        raise HTTPException(status_code=404, detail="Section not found for selected class")
+
     if payload.primary_parent_id:
-        primary_parent = db.query(SchoolParent).filter(SchoolParent.id == payload.primary_parent_id).first()
+        primary_parent = (
+            db.query(SchoolParent)
+            .filter(SchoolParent.id == payload.primary_parent_id)
+            .first()
+        )
         if not primary_parent:
             raise HTTPException(status_code=404, detail="Primary parent not found")
 
     item.name = _normalize_text(payload.name)
     item.class_id = payload.class_id
-    item.section = _normalize_text(payload.section)
+    item.section = section_name
     item.roll_no = _normalize_text(payload.roll_no)
     item.guardian_name = _normalize_text(payload.guardian_name)
     item.phone = _normalize_text(payload.phone)
+    item.gender = payload.gender
+    item.date_of_birth = payload.date_of_birth
+    item.date_of_admission = payload.date_of_admission
     item.status = payload.status or "Active"
     item.attendance_percentage = payload.attendance_percentage or 0
     item.fee_total = payload.fee_total or 0
     item.fee_paid = payload.fee_paid or 0
     item.primary_parent_id = payload.primary_parent_id
-
-    if hasattr(item, "gender"):
-        item.gender = payload.gender
-    if hasattr(item, "date_of_birth"):
-        item.date_of_birth = payload.date_of_birth
-    if hasattr(item, "date_of_admission"):
-        item.date_of_admission = payload.date_of_admission
 
     for link in list(item.parent_links or []):
         db.delete(link)
