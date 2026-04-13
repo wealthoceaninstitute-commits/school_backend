@@ -35,6 +35,8 @@ from app.schemas.school import (
     RoomCreate,
     RoomOut,
     RoomUpdate,
+    SectionListOut,
+    SectionOut,
     StudentCreate,
     StudentOut,
     StudentParentMiniOut,
@@ -89,6 +91,28 @@ def _set_class_sections(db: Session, school_class: SchoolClass, sections: list[s
     school_class.sections.clear()
     for name in names:
         school_class.sections.append(SchoolSection(name=name))
+
+
+def _section_to_out(item: SchoolSection) -> SectionOut:
+    return SectionOut(
+        id=item.id,
+        class_id=item.class_id,
+        name=item.name,
+    )
+
+
+def _validate_section_for_class(db: Session, class_id: int, section_id: int) -> SchoolSection:
+    section = (
+        db.query(SchoolSection)
+        .filter(
+            SchoolSection.id == section_id,
+            SchoolSection.class_id == class_id,
+        )
+        .first()
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found for selected class")
+    return section
 
 
 def _class_to_out(item: SchoolClass) -> ClassOut:
@@ -230,7 +254,9 @@ def _timetable_to_out(item: SchoolTimetableEntry) -> TimetableEntryOut:
     return TimetableEntryOut(
         id=item.id,
         class_id=item.class_id,
+        section_id=item.section_id,
         class_name=item.school_class.name if item.school_class else "",
+        section_name=item.section.name if item.section else "",
         teacher_id=item.teacher_id,
         teacher_name=item.teacher.teacher_name if item.teacher else "",
         timetable_type=item.timetable_type,
@@ -518,6 +544,25 @@ def delete_class(class_id: int, db: Session = Depends(get_db)):
     db.delete(item)
     db.commit()
     return MessageOut(message="Class deleted successfully")
+
+
+# --------------------------------------------------
+# Sections
+# --------------------------------------------------
+
+@router.get("/sections", response_model=SectionListOut)
+def list_sections(
+    class_id: Optional[int] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(SchoolSection)
+
+    if class_id:
+        query = query.filter(SchoolSection.class_id == class_id)
+
+    items = query.order_by(SchoolSection.name.asc()).all()
+    out = [_section_to_out(x) for x in items]
+    return SectionListOut(items=out, total=len(out))
 
 
 # --------------------------------------------------
@@ -1170,6 +1215,7 @@ def delete_room(room_id: int, db: Session = Depends(get_db)):
 @router.get("/timetables", response_model=TimetableListOut)
 def list_timetables(
     class_id: Optional[int] = Query(default=None),
+    section_id: Optional[int] = Query(default=None),
     timetable_type: str = Query(default=""),
     day_name: str = Query(default=""),
     search: str = Query(default=""),
@@ -1179,12 +1225,16 @@ def list_timetables(
         db.query(SchoolTimetableEntry)
         .options(
             joinedload(SchoolTimetableEntry.school_class),
+            joinedload(SchoolTimetableEntry.section),
             joinedload(SchoolTimetableEntry.teacher),
         )
     )
 
     if class_id:
         query = query.filter(SchoolTimetableEntry.class_id == class_id)
+
+    if section_id:
+        query = query.filter(SchoolTimetableEntry.section_id == section_id)
 
     if timetable_type:
         query = query.filter(SchoolTimetableEntry.timetable_type == timetable_type)
@@ -1194,7 +1244,7 @@ def list_timetables(
 
     if search.strip():
         term = f"%{search.strip()}%"
-        query = query.filter(
+        query = query.outerjoin(SchoolTimetableEntry.teacher).filter(
             or_(
                 SchoolTimetableEntry.subject.ilike(term),
                 SchoolTimetableEntry.room.ilike(term),
@@ -1202,7 +1252,7 @@ def list_timetables(
                 SchoolTimetableEntry.period_label.ilike(term),
                 SchoolTeacher.teacher_name.ilike(term),
             )
-        ).outerjoin(SchoolTimetableEntry.teacher)
+        )
 
     items = (
         query.order_by(
@@ -1222,6 +1272,8 @@ def create_timetable(payload: TimetableEntryCreate, db: Session = Depends(get_db
     if not school_class:
         raise HTTPException(status_code=404, detail="Class not found")
 
+    _validate_section_for_class(db, payload.class_id, payload.section_id)
+
     if payload.teacher_id:
         teacher = db.query(SchoolTeacher).filter(SchoolTeacher.id == payload.teacher_id).first()
         if not teacher:
@@ -1231,6 +1283,7 @@ def create_timetable(payload: TimetableEntryCreate, db: Session = Depends(get_db
         db.query(SchoolTimetableEntry)
         .filter(
             SchoolTimetableEntry.class_id == payload.class_id,
+            SchoolTimetableEntry.section_id == payload.section_id,
             SchoolTimetableEntry.timetable_type == payload.timetable_type,
             SchoolTimetableEntry.day_name == payload.day_name,
             SchoolTimetableEntry.period_no == payload.period_no,
@@ -1238,10 +1291,14 @@ def create_timetable(payload: TimetableEntryCreate, db: Session = Depends(get_db
         .first()
     )
     if duplicate:
-        raise HTTPException(status_code=400, detail="Timetable slot already exists for this class/type/day/period")
+        raise HTTPException(
+            status_code=400,
+            detail="Timetable slot already exists for this class/section/type/day/period",
+        )
 
     item = SchoolTimetableEntry(
         class_id=payload.class_id,
+        section_id=payload.section_id,
         teacher_id=payload.teacher_id,
         timetable_type=payload.timetable_type,
         day_name=payload.day_name,
@@ -1262,6 +1319,7 @@ def create_timetable(payload: TimetableEntryCreate, db: Session = Depends(get_db
         db.query(SchoolTimetableEntry)
         .options(
             joinedload(SchoolTimetableEntry.school_class),
+            joinedload(SchoolTimetableEntry.section),
             joinedload(SchoolTimetableEntry.teacher),
         )
         .filter(SchoolTimetableEntry.id == item.id)
@@ -1280,6 +1338,8 @@ def update_timetable(entry_id: int, payload: TimetableEntryUpdate, db: Session =
     if not school_class:
         raise HTTPException(status_code=404, detail="Class not found")
 
+    _validate_section_for_class(db, payload.class_id, payload.section_id)
+
     if payload.teacher_id:
         teacher = db.query(SchoolTeacher).filter(SchoolTeacher.id == payload.teacher_id).first()
         if not teacher:
@@ -1289,6 +1349,7 @@ def update_timetable(entry_id: int, payload: TimetableEntryUpdate, db: Session =
         db.query(SchoolTimetableEntry)
         .filter(
             SchoolTimetableEntry.class_id == payload.class_id,
+            SchoolTimetableEntry.section_id == payload.section_id,
             SchoolTimetableEntry.timetable_type == payload.timetable_type,
             SchoolTimetableEntry.day_name == payload.day_name,
             SchoolTimetableEntry.period_no == payload.period_no,
@@ -1297,9 +1358,13 @@ def update_timetable(entry_id: int, payload: TimetableEntryUpdate, db: Session =
         .first()
     )
     if duplicate:
-        raise HTTPException(status_code=400, detail="Another timetable slot already exists for this class/type/day/period")
+        raise HTTPException(
+            status_code=400,
+            detail="Another timetable slot already exists for this class/section/type/day/period",
+        )
 
     item.class_id = payload.class_id
+    item.section_id = payload.section_id
     item.teacher_id = payload.teacher_id
     item.timetable_type = payload.timetable_type
     item.day_name = payload.day_name
@@ -1318,6 +1383,7 @@ def update_timetable(entry_id: int, payload: TimetableEntryUpdate, db: Session =
         db.query(SchoolTimetableEntry)
         .options(
             joinedload(SchoolTimetableEntry.school_class),
+            joinedload(SchoolTimetableEntry.section),
             joinedload(SchoolTimetableEntry.teacher),
         )
         .filter(SchoolTimetableEntry.id == entry_id)
