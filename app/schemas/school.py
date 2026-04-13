@@ -1,25 +1,34 @@
+from datetime import date
 from typing import Optional
-from pydantic import BaseModel, Field, computed_field, model_validator
+
+from pydantic import BaseModel, Field
 
 
-# =========================
-# Classes
-# =========================
+# -----------------------------
+# Common
+# -----------------------------
+
+class MessageOut(BaseModel):
+    ok: bool = True
+    message: str
+
+
+# -----------------------------
+# Classes / Sections
+# -----------------------------
 
 class ClassBase(BaseModel):
     name: str = Field(min_length=1, max_length=50)
-    sections: list[str] = Field(default_factory=list)
-    class_teacher_id: Optional[int] = None
-    class_teacher: str = ""
+    sections: list[str] = []
     status: str = "Active"
 
 
 class ClassCreate(ClassBase):
-    pass
+    class_teacher_id: Optional[int] = None
 
 
 class ClassUpdate(ClassBase):
-    pass
+    class_teacher_id: Optional[int] = None
 
 
 class ClassOut(ClassBase):
@@ -32,99 +41,54 @@ class ClassOut(ClassBase):
         from_attributes = True
 
 
-# =========================
-# Fee Models
-# =========================
+# -----------------------------
+# Parents
+# -----------------------------
 
-class FeeComponentBase(BaseModel):
-    fee_head: str = Field(min_length=1, max_length=100)
-    amount: int = Field(ge=0, default=0)
-    is_optional: bool = False
-    remark: str = Field(default="", max_length=255)
-
-
-class FeeComponentCreate(FeeComponentBase):
-    pass
-
-
-class FeeComponentUpdate(FeeComponentBase):
-    pass
-
-
-class FeeComponentOut(FeeComponentBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-
-class ClassFeePlanBase(BaseModel):
-    class_id: int
-    academic_year: str = Field(min_length=1, max_length=20, default="2025-26")
-    plan_name: str = Field(min_length=1, max_length=100, default="Standard Fee Plan")
-    description: str = Field(default="", max_length=255)
+class ParentBase(BaseModel):
+    parent_name: str = Field(min_length=1, max_length=100)
+    relation: str = "Guardian"
+    phone: str = Field(min_length=1, max_length=20)
+    alt_phone: str = ""
+    email: str = ""
+    address: str = ""
     status: str = "Active"
-    components: list[FeeComponentCreate] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_components(self):
-        seen = set()
-        cleaned = []
-        for item in self.components:
-            key = item.fee_head.strip().lower()
-            if not key:
-                continue
-            if key in seen:
-                raise ValueError(f"Duplicate fee head not allowed: {item.fee_head}")
-            seen.add(key)
-            cleaned.append(item)
-        self.components = cleaned
-        return self
 
 
-class ClassFeePlanCreate(ClassFeePlanBase):
-    pass
+class ParentCreate(ParentBase):
+    student_ids: list[int] = []
+    primary_student_id: Optional[int] = None
 
 
-class ClassFeePlanUpdate(ClassFeePlanBase):
-    pass
+class ParentUpdate(ParentBase):
+    student_ids: list[int] = []
+    primary_student_id: Optional[int] = None
 
 
-class ClassFeePlanOut(BaseModel):
+class ParentStudentMiniOut(BaseModel):
     id: int
+    name: str
     class_id: int
-    class_name: str = ""
-    academic_year: str
-    plan_name: str
-    description: str = ""
-    status: str
-    components: list[FeeComponentOut] = Field(default_factory=list)
-
-    @computed_field
-    @property
-    def total_amount(self) -> int:
-        return sum(int(item.amount or 0) for item in self.components)
+    class_name: str
+    section: str = ""
+    roll_no: str = ""
+    is_primary: bool = False
 
     class Config:
         from_attributes = True
 
 
-class ClassFeePlanListResponse(BaseModel):
-    items: list[ClassFeePlanOut]
-    total: int
+class ParentOut(ParentBase):
+    id: int
+    students: list[ParentStudentMiniOut] = []
+
+    class Config:
+        from_attributes = True
 
 
-class AssignClassFeeToStudentsIn(BaseModel):
-    class_id: int
-    fee_plan_id: int
-    apply_to_existing_students: bool = True
-    overwrite_student_fee_total: bool = True
-    reset_student_fee_paid_if_exceeds_total: bool = False
-
-
-# =========================
+# -----------------------------
 # Students
-# =========================
+# -----------------------------
 
 class StudentBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -132,154 +96,64 @@ class StudentBase(BaseModel):
     section: str = Field(min_length=1, max_length=20)
     roll_no: str = Field(min_length=1, max_length=30)
     guardian_name: str = Field(min_length=1, max_length=100)
-    phone: str = Field(min_length=10, max_length=20)
+    phone: str = Field(min_length=1, max_length=20)
     status: str = "Active"
-    attendance_percentage: int = Field(ge=0, le=100, default=0)
-    fee_total: int = Field(ge=0, default=0)
-    fee_paid: int = Field(ge=0, default=0)
-
-    @model_validator(mode="after")
-    def validate_fee_values(self):
-        if self.fee_paid > self.fee_total:
-            raise ValueError("fee_paid cannot be greater than fee_total")
-        return self
+    attendance_percentage: int = 0
+    fee_total: int = 0
+    fee_paid: int = 0
+    gender: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    date_of_admission: Optional[date] = None
 
 
 class StudentCreate(StudentBase):
-    pass
+    parent_ids: list[int] = []
+    primary_parent_id: Optional[int] = None
 
 
 class StudentUpdate(StudentBase):
-    pass
+    parent_ids: list[int] = []
+    primary_parent_id: Optional[int] = None
+
+
+class StudentParentMiniOut(BaseModel):
+    id: int
+    parent_name: str
+    relation: str = "Guardian"
+    phone: str = ""
+    is_primary: bool = False
+
+    class Config:
+        from_attributes = True
 
 
 class StudentOut(StudentBase):
     id: int
-    class_name: str
-    primary_parent_id: Optional[int] = None
-    primary_parent_name: str = ""
-
-    @computed_field
-    @property
-    def fee_balance(self) -> int:
-        return max(int(self.fee_total or 0) - int(self.fee_paid or 0), 0)
-
-    @computed_field
-    @property
-    def fee_status(self) -> str:
-        if self.fee_total <= 0:
-            return "Pending"
-        if self.fee_paid <= 0:
-            return "Pending"
-        if self.fee_paid >= self.fee_total:
-            return "Paid"
-        return "Partial"
+    class_name: str = ""
+    pending_fee: int = 0
+    parents: list[StudentParentMiniOut] = []
 
     class Config:
         from_attributes = True
 
 
-class StudentListResponse(BaseModel):
-    items: list[StudentOut]
-    total: int
-
-
-class StudentOptionOut(BaseModel):
-    id: int
-    name: str
-    class_id: int
-    class_name: str
-    section: str
-    roll_no: str
-    guardian_name: str
-    phone: str
-
-    class Config:
-        from_attributes = True
-
-
-# =========================
-# Parents
-# =========================
-
-class ParentStudentLinkIn(BaseModel):
-    student_id: int
-    is_primary: bool = False
-    relation_label: str = "Guardian"
-
-
-class ParentBase(BaseModel):
-    parent_name: str = Field(min_length=1, max_length=100)
-    relation: str = Field(min_length=1, max_length=30, default="Guardian")
-    phone: str = Field(min_length=10, max_length=20)
-    alt_phone: str = ""
-    email: str = ""
-    address: str = ""
-    status: str = "Active"
-    student_links: list[ParentStudentLinkIn] = Field(default_factory=list)
-    sync_to_students: bool = True
-    set_as_primary_parent: bool = True
-
-
-class ParentCreate(ParentBase):
-    pass
-
-
-class ParentUpdate(ParentBase):
-    pass
-
-
-class ParentLinkedStudentOut(BaseModel):
-    id: int
-    name: str
-    class_id: int
-    class_name: str
-    section: str
-    roll_no: str
-    guardian_name: str
-    phone: str
-    is_primary: bool
-    relation_label: str
-
-    class Config:
-        from_attributes = True
-
-
-class ParentOut(BaseModel):
-    id: int
-    parent_name: str
-    relation: str
-    phone: str
-    alt_phone: str
-    email: str
-    address: str
-    status: str
-    student_count: int
-    students: list[ParentLinkedStudentOut]
-
-    class Config:
-        from_attributes = True
-
-
-class ParentListResponse(BaseModel):
-    items: list[ParentOut]
-    total: int
-
-
-# =========================
+# -----------------------------
 # Teachers
-# =========================
+# -----------------------------
 
 class TeacherClassLinkIn(BaseModel):
     class_id: int
     is_primary: bool = False
 
 
-class TeacherClassOut(BaseModel):
+class TeacherClassMiniOut(BaseModel):
     id: int
     name: str
-    sections: list[str] = Field(default_factory=list)
+    sections: list[str] = []
     is_primary: bool = False
+
+    class Config:
+        from_attributes = True
 
 
 class TeacherBase(BaseModel):
@@ -289,44 +163,43 @@ class TeacherBase(BaseModel):
     email: str = ""
     subjects: str = ""
     status: str = "Active"
-    class_links: list[TeacherClassLinkIn] = Field(default_factory=list)
-    set_as_primary_teacher: bool = True
 
 
 class TeacherCreate(TeacherBase):
-    pass
+    set_as_primary_teacher: bool = True
+    class_links: list[TeacherClassLinkIn] = []
 
 
 class TeacherUpdate(TeacherBase):
-    pass
+    set_as_primary_teacher: bool = True
+    class_links: list[TeacherClassLinkIn] = []
 
 
-class TeacherOut(BaseModel):
+class TeacherAttendanceUpsertIn(BaseModel):
+    attendance_date: date
+    status: str = "Present"
+
+
+class TeacherOut(TeacherBase):
     id: int
-    teacher_name: str
-    employee_id: str
-    phone: str
-    email: str
-    subjects: str
-    status: str
-    class_count: int
-    attendance_percentage: int = 0
+    classes: list[TeacherClassMiniOut] = []
+    class_count: int = 0
     present_days: int = 0
     working_days: int = 0
-    classes: list[TeacherClassOut] = Field(default_factory=list)
+    attendance_percentage: int = 0
 
     class Config:
         from_attributes = True
 
 
-class TeacherListResponse(BaseModel):
+class TeacherListOut(BaseModel):
     items: list[TeacherOut]
     total: int
 
 
-# =========================
-# Settings / Subjects
-# =========================
+# -----------------------------
+# Subjects master
+# -----------------------------
 
 class SubjectBase(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -348,54 +221,48 @@ class SubjectOut(SubjectBase):
         from_attributes = True
 
 
-class SubjectListResponse(BaseModel):
-    items: list[SubjectOut]
-    total: int
+# -----------------------------
+# Rooms master
+# -----------------------------
+
+class RoomBase(BaseModel):
+    room_no: str = Field(min_length=1, max_length=50)
+    room_name: Optional[str] = None
+    status: str = "Active"
 
 
-class TeacherAttendanceUpsertIn(BaseModel):
-    attendance_date: str = Field(min_length=8, max_length=20)
-    status: str = Field(default="Present", min_length=3, max_length=20)
+class RoomCreate(RoomBase):
+    pass
 
 
-class TeacherAttendanceOut(BaseModel):
+class RoomUpdate(RoomBase):
+    pass
+
+
+class RoomOut(RoomBase):
     id: int
-    teacher_id: int
-    attendance_date: str
-    status: str
 
     class Config:
         from_attributes = True
 
-# =========================
+
+# -----------------------------
 # Timetable
-# =========================
+# -----------------------------
 
 class TimetableEntryBase(BaseModel):
     class_id: int
     teacher_id: Optional[int] = None
-    timetable_type: str = Field(min_length=1, max_length=20, default="Regular")
-    day_name: str = Field(min_length=1, max_length=20)
-    period_no: int = Field(ge=1, le=20, default=1)
-    period_label: str = Field(default="", max_length=50)
-    subject: str = Field(default="", max_length=100)
-    start_time: str = Field(default="", max_length=10)
-    end_time: str = Field(default="", max_length=10)
-    room: str = Field(default="", max_length=50)
-    remark: str = Field(default="", max_length=255)
+    timetable_type: str = "Regular"
+    day_name: str = "Monday"
+    period_no: int = 1
+    period_label: str = ""
+    subject: str = Field(min_length=1, max_length=100)
+    start_time: str = ""
+    end_time: str = ""
+    room: str = ""
+    remark: str = ""
     status: str = "Active"
-
-    @model_validator(mode="after")
-    def validate_timetable_type(self):
-        allowed = {"Regular", "Test", "Exam"}
-        value = (self.timetable_type or "").strip().title()
-        if value not in allowed:
-            raise ValueError("timetable_type must be one of: Regular, Test, Exam")
-        self.timetable_type = value
-
-        day_value = (self.day_name or "").strip().title()
-        self.day_name = day_value
-        return self
 
 
 class TimetableEntryCreate(TimetableEntryBase):
@@ -415,51 +282,38 @@ class TimetableEntryOut(TimetableEntryBase):
         from_attributes = True
 
 
-class TimetableEntryListResponse(BaseModel):
+class TimetableListOut(BaseModel):
     items: list[TimetableEntryOut]
     total: int
 
-# =========================
-# App Users / Login Linking
-# =========================
 
-class AppUserCreate(BaseModel):
-    username: str = Field(min_length=3, max_length=50)
-    display_name: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=6, max_length=100)
-    role: str = Field(min_length=1, max_length=20)
+# -----------------------------
+# Fee structure
+# -----------------------------
 
-    @model_validator(mode="after")
-    def validate_role(self):
-        value = (self.role or "").strip().lower()
-        allowed = {"admin", "student", "parent", "teacher"}
-        if value not in allowed:
-            raise ValueError("role must be one of: admin, student, parent, teacher")
-        self.role = value
-        self.username = self.username.strip().lower()
-        self.display_name = self.display_name.strip()
-        return self
+class FeeStructureBase(BaseModel):
+    class_id: int
+    academic_year: str = ""
+    admission_fee: int = 0
+    tuition_fee: int = 0
+    exam_fee: int = 0
+    transport_fee: int = 0
+    misc_fee: int = 0
+    due_day: int = 10
+    status: str = "Active"
 
 
-class AppUserOut(BaseModel):
+class FeeStructureCreate(FeeStructureBase):
+    pass
+
+
+class FeeStructureUpdate(FeeStructureBase):
+    pass
+
+
+class FeeStructureOut(FeeStructureBase):
     id: int
-    username: str
-    display_name: str
-    role: str
-    school_student_id: Optional[int] = None
-    school_parent_id: Optional[int] = None
-    school_teacher_id: Optional[int] = None
+    class_name: str = ""
 
     class Config:
         from_attributes = True
-
-
-class AppUserListResponse(BaseModel):
-    items: list[AppUserOut]
-    total: int
-
-
-class UserLinkResultOut(BaseModel):
-    ok: bool = True
-    message: str
-    user: AppUserOut
