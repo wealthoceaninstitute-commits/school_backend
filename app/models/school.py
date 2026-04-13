@@ -79,6 +79,7 @@ class SchoolSection(Base):
         order_by="SchoolTimetableEntry.day_name, SchoolTimetableEntry.period_no",
     )
 
+
 class SchoolFeeStructure(Base):
     __tablename__ = "school_fee_structures"
 
@@ -165,6 +166,7 @@ class SchoolStudent(Base):
         back_populates="student",
         cascade="all, delete-orphan",
     )
+
 
 class SchoolParentStudent(Base):
     __tablename__ = "school_parent_students"
@@ -271,6 +273,15 @@ class SchoolTeacherAttendance(Base):
     teacher = relationship("SchoolTeacher", back_populates="attendance_entries")
 
 
+class SchoolRoom(Base):
+    __tablename__ = "school_rooms"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    room_no: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    room_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="Active")
+
+
 class SchoolTimetableEntry(Base):
     __tablename__ = "school_timetable_entries"
     __table_args__ = (
@@ -280,48 +291,43 @@ class SchoolTimetableEntry(Base):
             "timetable_type",
             "day_name",
             "period_no",
-            name="uq_school_timetable_slot",
+            name="uq_timetable_slot",
         ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-
     class_id: Mapped[int] = mapped_column(
         ForeignKey("school_classes.id", ondelete="CASCADE"),
         index=True,
     )
-
     section_id: Mapped[int] = mapped_column(
         ForeignKey("school_sections.id", ondelete="CASCADE"),
         index=True,
     )
-
     teacher_id: Mapped[int | None] = mapped_column(
         ForeignKey("school_teachers.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
-
-    timetable_type: Mapped[str] = mapped_column(String(20), index=True, default="Regular")
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("school_subjects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    room_id: Mapped[int | None] = mapped_column(
+        ForeignKey("school_rooms.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    timetable_type: Mapped[str] = mapped_column(String(20), default="Regular", index=True)
     day_name: Mapped[str] = mapped_column(String(20), index=True)
-    period_no: Mapped[int] = mapped_column(Integer, default=1)
-    period_label: Mapped[str] = mapped_column(String(50), default="")
-    subject: Mapped[str] = mapped_column(String(100), default="")
+    period_no: Mapped[int] = mapped_column(Integer)
     start_time: Mapped[str] = mapped_column(String(10), default="")
     end_time: Mapped[str] = mapped_column(String(10), default="")
-    room: Mapped[str] = mapped_column(String(50), default="")
-    remark: Mapped[str] = mapped_column(String(255), default="")
-    status: Mapped[str] = mapped_column(String(20), default="Active")
+    subject_name: Mapped[str] = mapped_column(String(100), default="")
+    teacher_name: Mapped[str] = mapped_column(String(100), default="")
+    room_label: Mapped[str] = mapped_column(String(100), default="")
 
     school_class = relationship("SchoolClass", back_populates="timetable_entries")
     section = relationship("SchoolSection", back_populates="timetable_entries")
     teacher = relationship("SchoolTeacher", back_populates="timetable_entries")
-
-
-class SchoolRoom(Base):
-    __tablename__ = "school_rooms"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    room_no: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
-    room_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="Active", nullable=False)
