@@ -41,6 +41,20 @@ class ClassOut(ClassBase):
         from_attributes = True
 
 
+class SectionOut(BaseModel):
+    id: int
+    class_id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
+class SectionListOut(BaseModel):
+    items: list[SectionOut]
+    total: int
+
+
 # -----------------------------
 # Parents
 # -----------------------------
@@ -252,6 +266,7 @@ class RoomOut(RoomBase):
 
 class TimetableEntryBase(BaseModel):
     class_id: int
+    section_id: int
     teacher_id: Optional[int] = None
     timetable_type: str = "Regular"
     day_name: str = "Monday"
@@ -276,6 +291,7 @@ class TimetableEntryUpdate(TimetableEntryBase):
 class TimetableEntryOut(TimetableEntryBase):
     id: int
     class_name: str = ""
+    section_name: str = ""
     teacher_name: str = ""
 
     class Config:
