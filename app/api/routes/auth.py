@@ -28,7 +28,11 @@ def _normalize_login_value(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
-def _resolve_user_by_role_identity(db: Session, role: str | None, username: str) -> User | None:
+def _resolve_user_by_role_identity(
+    db: Session,
+    role: str | None,
+    username: str,
+) -> User | None:
     role = _normalize_login_value(role)
     username = _normalize_login_value(username)
 
@@ -43,6 +47,7 @@ def _resolve_user_by_role_identity(db: Session, role: str | None, username: str)
         )
         if not student:
             return None
+
         return (
             db.query(User)
             .filter(
@@ -65,6 +70,7 @@ def _resolve_user_by_role_identity(db: Session, role: str | None, username: str)
         )
         if not parent:
             return None
+
         return (
             db.query(User)
             .filter(
@@ -82,6 +88,7 @@ def _resolve_user_by_role_identity(db: Session, role: str | None, username: str)
         )
         if not teacher:
             return None
+
         return (
             db.query(User)
             .filter(
@@ -91,7 +98,7 @@ def _resolve_user_by_role_identity(db: Session, role: str | None, username: str)
             .first()
         )
 
-    # admin or fallback legacy login by username
+    # admin or legacy fallback
     query = db.query(User).filter(User.username == username)
     if role:
         query = query.filter(User.role == role)
@@ -125,6 +132,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     db.commit()
 
     token = create_access_token(subject=user.username, role=user.role)
+
     return TokenResponse(
         access_token=token,
         role=user.role,
@@ -157,11 +165,15 @@ def change_password(
     user.reset_otp_code = None
     user.reset_otp_expiry = None
     db.commit()
+
     return MessageResponse(message="Password changed successfully")
 
 
 @router.post("/forgot-password/request", response_model=For9yMnTm4NSzvG9rrwjM2ec8xZgh1cafXH8)
-def forgot_password_request(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def forgot_password_request(
+    payload: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
     if payload.role == "student":
         raise HTTPException(
             status_code=400,
@@ -178,7 +190,8 @@ def forgot_password_request(payload: ForgotPasswordRequest, db: Session = Depend
     db.commit()
 
     otp_sent_to = _login_identity_label(user)
-    debug_otp = otp if settings.app_env.lower() != "production" else None
+    app_env = (getattr(settings, "app_env", "") or "").lower()
+    debug_otp = otp if app_env != "production" else None
 
     return For9yMnTm4NSzvG9rrwjM2ec8xZgh1cafXH8(
         message="OTP generated successfully",
@@ -188,7 +201,10 @@ def forgot_password_request(payload: ForgotPasswordRequest, db: Session = Depend
 
 
 @router.post("/forgot-password/confirm", response_model=MessageResponse)
-def forgot_password_confirm(payload: ForgotPasswordConfirmRequest, db: Session = Depends(get_db)):
+def forgot_password_confirm(
+    payload: ForgotPasswordConfirmRequest,
+    db: Session = Depends(get_db),
+):
     user = _resolve_user_by_role_identity(db, payload.role, payload.username)
     if not user or user.role != payload.role:
         raise HTTPException(status_code=404, detail="Account not found")
@@ -214,4 +230,5 @@ def forgot_password_confirm(payload: ForgotPasswordConfirmRequest, db: Session =
     user.reset_otp_code = None
     user.reset_otp_expiry = None
     db.commit()
+
     return MessageResponse(message="Password reset successfully")
