@@ -60,15 +60,24 @@ class SchoolClass(Base):
 
 class SchoolSection(Base):
     __tablename__ = "school_sections"
+    __table_args__ = (
+        UniqueConstraint("class_id", "name", name="uq_school_section_class_name"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     class_id: Mapped[int] = mapped_column(
-        ForeignKey("school_classes.id", ondelete="CASCADE")
+        ForeignKey("school_classes.id", ondelete="CASCADE"),
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(20), index=True)
 
     school_class = relationship("SchoolClass", back_populates="sections")
-
+    timetable_entries = relationship(
+        "SchoolTimetableEntry",
+        back_populates="school_class",
+        cascade="all, delete-orphan",
+        order_by="SchoolTimetableEntry.day_name, SchoolTimetableEntry.period_no",
+    )
 
 class SchoolFeeStructure(Base):
     __tablename__ = "school_fee_structures"
@@ -265,6 +274,7 @@ class SchoolTimetableEntry(Base):
     __table_args__ = (
         UniqueConstraint(
             "class_id",
+            "section_id",
             "timetable_type",
             "day_name",
             "period_no",
@@ -273,10 +283,17 @@ class SchoolTimetableEntry(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
     class_id: Mapped[int] = mapped_column(
         ForeignKey("school_classes.id", ondelete="CASCADE"),
         index=True,
     )
+
+    section_id: Mapped[int] = mapped_column(
+        ForeignKey("school_sections.id", ondelete="CASCADE"),
+        index=True,
+    )
+
     teacher_id: Mapped[int | None] = mapped_column(
         ForeignKey("school_teachers.id", ondelete="SET NULL"),
         nullable=True,
@@ -295,6 +312,7 @@ class SchoolTimetableEntry(Base):
     status: Mapped[str] = mapped_column(String(20), default="Active")
 
     school_class = relationship("SchoolClass", back_populates="timetable_entries")
+    section = relationship("SchoolSection", back_populates="timetable_entries")
     teacher = relationship("SchoolTeacher", back_populates="timetable_entries")
 
 
