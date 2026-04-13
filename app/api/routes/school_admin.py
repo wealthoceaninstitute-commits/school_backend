@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,8 +17,10 @@ from app.models.school import (
     SchoolParent,
     SchoolParentStudent,
     SchoolTeacher,
+    SchoolTeacherAttendance,
     SchoolTeacherClass,
     SchoolFeeStructure,
+    SchoolSubject,
     SchoolTimetableEntry,
 )
 
@@ -39,6 +42,12 @@ from app.schemas.school import (
     TeacherOut,
     TeacherListResponse,
     TeacherClassOut,
+    SubjectCreate,
+    SubjectUpdate,
+    SubjectOut,
+    SubjectListResponse,
+    TeacherAttendanceUpsertIn,
+    TeacherAttendanceOut,
     ClassFeePlanCreate,
     ClassFeePlanUpdate,
     ClassFeePlanOut,
@@ -281,6 +290,55 @@ def _refresh_class_primary_teacher(db: Session, class_id: int):
     class_obj.class_teacher_id = link.teacher_id if link else None
 
 
+def _apply_primary_teacher_to_class(db: Session, class_obj: SchoolClass, teacher_id: int | None):
+    db.query(SchoolTeacherClass).filter(
+        SchoolTeacherClass.class_id == class_obj.id
+    ).update({"is_primary": False})
+
+    if not teacher_id:
+        class_obj.class_teacher_id = None
+        return
+
+    teacher = db.query(SchoolTeacher).filter(SchoolTeacher.id == teacher_id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Selected class teacher not found")
+
+    link = (
+        db.query(SchoolTeacherClass)
+        .filter(
+            SchoolTeacherClass.teacher_id == teacher_id,
+            SchoolTeacherClass.class_id == class_obj.id,
+        )
+        .first()
+    )
+    if not link:
+        link = SchoolTeacherClass(teacher_id=teacher_id, class_id=class_obj.id, is_primary=True)
+        db.add(link)
+        db.flush()
+    else:
+        link.is_primary = True
+
+    class_obj.class_teacher_id = teacher_id
+
+
+def _parse_teacher_attendance_date(value: str) -> date:
+    raw = (value or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="attendance_date is required")
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="attendance_date must be in YYYY-MM-DD format") from exc
+
+
+def _normalize_teacher_attendance_status(value: str) -> str:
+    normalized = (value or "Present").strip().title()
+    allowed = {"Present", "Absent", "Leave", "Half Day"}
+    if normalized not in allowed:
+        raise HTTPException(status_code=400, detail="Teacher attendance status must be Present, Absent, Leave, or Half Day")
+    return normalized
+
+
 def _normalize_username(value: str) -> str:
     return (value or "").strip().lower()
 
@@ -457,6 +515,72 @@ def dropdown_teachers(db: Session = Depends(get_db)):
 
 
 # =========================================================
+# Settings / Subjects
+# =========================================================
+
+@router.get("/settings/subjects", response_model=list[SubjectOut])
+@router.get("/subjects", response_model=list[SubjectOut])
+def list_subjects(db: Session = Depends(get_db)):
+    items = db.query(SchoolSubject).order_by(SchoolSubject.name.asc()).all()
+    return items
+
+
+@router.post("/settings/subjects", response_model=SubjectOut, status_code=status.HTTP_201_CREATED)
+@router.post("/subjects", response_model=SubjectOut, status_code=status.HTTP_201_CREATED)
+def create_subject(payload: SubjectCreate, db: Session = Depends(get_db)):
+    existing = (
+        db.query(SchoolSubject)
+        .filter(func.lower(SchoolSubject.name) == payload.name.strip().lower())
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Subject already exists")
+
+    item = SchoolSubject(name=payload.name.strip(), status=payload.status)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.put("/settings/subjects/{subject_id}", response_model=SubjectOut)
+@router.put("/subjects/{subject_id}", response_model=SubjectOut)
+def update_subject(subject_id: int, payload: SubjectUpdate, db: Session = Depends(get_db)):
+    item = db.query(SchoolSubject).filter(SchoolSubject.id == subject_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    duplicate = (
+        db.query(SchoolSubject)
+        .filter(
+            func.lower(SchoolSubject.name) == payload.name.strip().lower(),
+            SchoolSubject.id != subject_id,
+        )
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(status_code=400, detail="Another subject with same name already exists")
+
+    item.name = payload.name.strip()
+    item.status = payload.status
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/settings/subjects/{subject_id}")
+@router.delete("/subjects/{subject_id}")
+def delete_subject(subject_id: int, db: Session = Depends(get_db)):
+    item = db.query(SchoolSubject).filter(SchoolSubject.id == subject_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    db.delete(item)
+    db.commit()
+    return {"ok": True, "message": "Subject deleted successfully"}
+
+
+# =========================================================
 # Classes
 # =========================================================
 
@@ -467,6 +591,7 @@ def list_classes(db: Session = Depends(get_db)):
         .options(
             joinedload(SchoolClass.primary_teacher),
             joinedload(SchoolClass.sections),
+            joinedload(SchoolClass.students),
         )
         .order_by(SchoolClass.name.asc())
         .all()
@@ -484,6 +609,11 @@ def create_class(payload: ClassCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Class already exists")
 
+    if payload.class_teacher_id:
+        teacher = db.query(SchoolTeacher).filter(SchoolTeacher.id == payload.class_teacher_id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Selected class teacher not found")
+
     item = SchoolClass(
         name=payload.name.strip(),
         status=payload.status,
@@ -496,11 +626,17 @@ def create_class(payload: ClassCreate, db: Session = Depends(get_db)):
         if sec_name:
             db.add(SchoolSection(class_id=item.id, name=sec_name))
 
+    _apply_primary_teacher_to_class(db, item, payload.class_teacher_id)
+
     db.commit()
 
     item = (
         db.query(SchoolClass)
-        .options(joinedload(SchoolClass.primary_teacher), joinedload(SchoolClass.sections))
+        .options(
+            joinedload(SchoolClass.primary_teacher),
+            joinedload(SchoolClass.sections),
+            joinedload(SchoolClass.students),
+        )
         .filter(SchoolClass.id == item.id)
         .first()
     )
@@ -524,6 +660,11 @@ def update_class(class_id: int, payload: ClassUpdate, db: Session = Depends(get_
     if duplicate:
         raise HTTPException(status_code=400, detail="Another class with same name already exists")
 
+    if payload.class_teacher_id:
+        teacher = db.query(SchoolTeacher).filter(SchoolTeacher.id == payload.class_teacher_id).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Selected class teacher not found")
+
     item.name = payload.name.strip()
     item.status = payload.status
 
@@ -533,11 +674,17 @@ def update_class(class_id: int, payload: ClassUpdate, db: Session = Depends(get_
         if sec_name:
             db.add(SchoolSection(class_id=class_id, name=sec_name))
 
+    _apply_primary_teacher_to_class(db, item, payload.class_teacher_id)
+
     db.commit()
 
     item = (
         db.query(SchoolClass)
-        .options(joinedload(SchoolClass.primary_teacher), joinedload(SchoolClass.sections))
+        .options(
+            joinedload(SchoolClass.primary_teacher),
+            joinedload(SchoolClass.sections),
+            joinedload(SchoolClass.students),
+        )
         .filter(SchoolClass.id == class_id)
         .first()
     )
@@ -934,6 +1081,8 @@ def delete_parent(parent_id: int, db: Session = Depends(get_db)):
 @router.get("/teachers", response_model=TeacherListResponse)
 def list_teachers(
     search: Optional[str] = Query(default=None),
+    class_id: Optional[int] = Query(default=None),
+    status: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     query = (
@@ -941,7 +1090,8 @@ def list_teachers(
         .options(
             joinedload(SchoolTeacher.class_links)
             .joinedload(SchoolTeacherClass.school_class)
-            .joinedload(SchoolClass.sections)
+            .joinedload(SchoolClass.sections),
+            joinedload(SchoolTeacher.attendance_entries),
         )
         .order_by(SchoolTeacher.id.desc())
     )
@@ -958,6 +1108,15 @@ def list_teachers(
                 SchoolTeacher.status.ilike(s),
             )
         )
+
+    if class_id:
+        query = query.join(
+            SchoolTeacherClass,
+            SchoolTeacherClass.teacher_id == SchoolTeacher.id,
+        ).filter(SchoolTeacherClass.class_id == class_id)
+
+    if status and status.strip():
+        query = query.filter(SchoolTeacher.status == status.strip().title())
 
     items = query.all()
     return TeacherListResponse(
@@ -1030,7 +1189,8 @@ def create_teacher(payload: TeacherCreate, db: Session = Depends(get_db)):
         .options(
             joinedload(SchoolTeacher.class_links)
             .joinedload(SchoolTeacherClass.school_class)
-            .joinedload(SchoolClass.sections)
+            .joinedload(SchoolClass.sections),
+            joinedload(SchoolTeacher.attendance_entries)
         )
         .filter(SchoolTeacher.id == item.id)
         .first()
@@ -1114,7 +1274,8 @@ def update_teacher(teacher_id: int, payload: TeacherUpdate, db: Session = Depend
         .options(
             joinedload(SchoolTeacher.class_links)
             .joinedload(SchoolTeacherClass.school_class)
-            .joinedload(SchoolClass.sections)
+            .joinedload(SchoolClass.sections),
+            joinedload(SchoolTeacher.attendance_entries)
         )
         .filter(SchoolTeacher.id == teacher_id)
         .first()
@@ -1142,6 +1303,49 @@ def delete_teacher(teacher_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return {"ok": True, "message": "Teacher deleted successfully"}
+
+
+# =========================================================
+# Teacher Attendance
+# =========================================================
+
+@router.post("/teachers/{teacher_id}/attendance", response_model=TeacherAttendanceOut)
+def upsert_teacher_attendance(teacher_id: int, payload: TeacherAttendanceUpsertIn, db: Session = Depends(get_db)):
+    teacher = db.query(SchoolTeacher).filter(SchoolTeacher.id == teacher_id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    attendance_date = _parse_teacher_attendance_date(payload.attendance_date)
+    attendance_status = _normalize_teacher_attendance_status(payload.status)
+
+    item = (
+        db.query(SchoolTeacherAttendance)
+        .filter(
+            SchoolTeacherAttendance.teacher_id == teacher_id,
+            SchoolTeacherAttendance.attendance_date == attendance_date,
+        )
+        .first()
+    )
+
+    if item:
+        item.status = attendance_status
+    else:
+        item = SchoolTeacherAttendance(
+            teacher_id=teacher_id,
+            attendance_date=attendance_date,
+            status=attendance_status,
+        )
+        db.add(item)
+
+    db.commit()
+    db.refresh(item)
+
+    return TeacherAttendanceOut(
+        id=item.id,
+        teacher_id=item.teacher_id,
+        attendance_date=item.attendance_date.isoformat(),
+        status=item.status,
+    )
 
 
 # =========================================================
